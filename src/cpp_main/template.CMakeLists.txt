@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.15)
+project(cpp-torch)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_PREFIX_PATH "</path/to/libtorch>")
+
+find_package(Torch REQUIRED)
+
+add_executable(run-cpp.x main.cpp)
+target_link_libraries(run-cpp.x "${TORCH_LIBRARIES}")
+set_property(TARGET run-cpp.x PROPERTY CXX_STANDARD 17)
+

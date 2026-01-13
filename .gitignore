@@ -17,3 +17,6 @@ __pycache__
 
 # output
 wdir/
+
+# c++
+src/cpp_main/CMakeLists.txt
