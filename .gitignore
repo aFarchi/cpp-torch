@@ -14,6 +14,6 @@ __pycache__
 
 # vim
 *.swp
-# pixi environments
-.pixi/*
-!.pixi/config.toml
+
+# output
+wdir/
