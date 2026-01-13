@@ -33,5 +33,12 @@ def init(name, batch_size):
     init_and_export(name, batch_size)
 
 
+@cli.command(name='check')
+def check():
+    """Checks the output of the c++ run."""
+    from cpp_torch.check import check
+    check()
+
+
 if __name__ == '__main__':
     cli()

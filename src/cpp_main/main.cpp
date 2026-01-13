@@ -30,14 +30,11 @@ std::vector<std::int64_t> read_shape(const std::string& filename) {
     }
     std::string line;
 
-    // 1. Skip header line
-    std::getline(file, line);
-
-    // 2. Read number of dimensions
+    // read number of dimensions
     int ndim;
     file >> ndim;
 
-    // 3. Read each dimension size
+    // read each dimension size
     std::vector<std::int64_t> sizes;
     sizes.reserve(ndim);
     for (int i = 0; i < ndim; ++i) {

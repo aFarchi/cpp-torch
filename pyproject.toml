@@ -25,6 +25,7 @@ cpp_torch = { path = ".", editable = true }
 init = "cpp-torch init"
 make = "cd wdir; cmake ../src/cpp_main; make"
 cpp = "./wdir/run-cpp.x"
+check = "cpp-torch check"
 
 [tool.pixi.dependencies]
 numpy = ">=2.4.1,<3"
