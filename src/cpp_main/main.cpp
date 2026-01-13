@@ -2,6 +2,8 @@
 #include <torch/autograd.h>
 #include <fstream>
 #include <iostream>
+#include <string>
+#include <vector>
 
 // dump tensor to binary
 void dump(const std::string& name, const torch::Tensor& t) {
@@ -18,6 +20,32 @@ torch::Tensor flatten(const std::vector<torch::Tensor> t_in) {
         components.push_back(t.flatten());
     }
     return torch::cat(components);
+}
+
+// read shape from text file
+std::vector<std::int64_t> read_shape(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + filename);
+    }
+    std::string line;
+
+    // 1. Skip header line
+    std::getline(file, line);
+
+    // 2. Read number of dimensions
+    int ndim;
+    file >> ndim;
+
+    // 3. Read each dimension size
+    std::vector<std::int64_t> sizes;
+    sizes.reserve(ndim);
+    for (int i = 0; i < ndim; ++i) {
+        std::int64_t dim;
+        file >> dim;
+        sizes.push_back(dim);
+    }
+    return sizes;
 }
 
 // wrapper around scripted module
@@ -150,8 +178,8 @@ int main() {
     torch::manual_seed(0);
     ScriptedModule model(
         "wdir/scripted_model.pt", // filename
-        {10}, // input_shape
-        {5} // output_shape
+        read_shape("wdir/input_shape.txt"), // input_shape
+        read_shape("wdir/output_shape.txt") // output_shape
     );
     std::cout << "created scripted model" << std::endl;
     std::cout << "input_shape: " << model.get_input_shape() << std::endl;
