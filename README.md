@@ -40,9 +40,11 @@ on the output of the c++ executable.
 
 Currently, the following neural networks are implemented:
 - "small-mlp": a small MLP;
+- "gnn-sage": a small GNN with only `torch_geometric.nn.SAGEConv` layers and only supporting `batch_size=1`;
 - more to come
 
 To implement other neural networks, follow the example of the small MLP
 in `src/cpp_torch/modules/multi_layer_perceptron.py`. You only need to subclass
 `torch.nn.Module` and additionally provide the `input_shape` and `output_shape`
-attributes for the toolbox to work.
+attributes for the toolbox to work. Don't forget to register the implemented
+neural network by its name in `src/cpp_torch/modules/__init__.py`.
