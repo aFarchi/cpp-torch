@@ -22,8 +22,9 @@ def cli():
     default='small-mlp',
     help='name of the model to initialise (default "mlp")',
 )
-@click.argument(
-    'batch-size',
+@click.option(
+    '-b',
+    '--batch-size',
     default=8,
     help='batch size to prepend to the input shape (default 8)',
 )

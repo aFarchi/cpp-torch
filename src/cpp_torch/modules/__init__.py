@@ -7,5 +7,11 @@ def construct_module(name, batch_size):
         case 'gnn-sage':
             from cpp_torch.modules.gnn_sage_conv import SmallGNN
             return SmallGNN(batch_size)
+        case 'gnn-gatv2':
+            from cpp_torch.modules.gnn_gatv2 import SmallGNN
+            return SmallGNN(batch_size)
+        case 'gnn-gatv3':
+            from cpp_torch.modules.gnn_gatv3 import SmallGNN
+            return SmallGNN(batch_size)
         case _:
             raise ValueError(f'unknown module: {name}')
