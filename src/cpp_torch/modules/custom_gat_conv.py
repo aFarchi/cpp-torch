@@ -217,47 +217,13 @@ class GATv2Conv(MessagePassing):
         glorot(self.att)
         zeros(self.bias)
 
-    @overload
-    def forward(
-        self,
-        x: Union[Tensor, PairTensor],
-        edge_index: Adj,
-        edge_attr: OptTensor = None,
-        return_attention_weights: NoneType = None,
-    ) -> Tensor:
-        pass
-
-    @overload
     def forward(  # noqa: F811
         self,
         x: Union[Tensor, PairTensor],
         edge_index: Tensor,
         edge_attr: OptTensor = None,
-        return_attention_weights: bool = None,
-    ) -> Tuple[Tensor, Tuple[Tensor, Tensor]]:
-        pass
-
-    @overload
-    def forward(  # noqa: F811
-        self,
-        x: Union[Tensor, PairTensor],
-        edge_index: SparseTensor,
-        edge_attr: OptTensor = None,
-        return_attention_weights: bool = None,
-    ) -> Tuple[Tensor, SparseTensor]:
-        pass
-
-    def forward(  # noqa: F811
-        self,
-        x: Union[Tensor, PairTensor],
-        edge_index: Adj,
-        edge_attr: OptTensor = None,
         return_attention_weights: Optional[bool] = None,
-    ) -> Union[
-            Tensor,
-            Tuple[Tensor, Tuple[Tensor, Tensor]],
-            Tuple[Tensor, SparseTensor],
-    ]:
+    ) -> Tensor:
         r"""Runs the forward pass of the module.
 
         Args:
@@ -288,38 +254,21 @@ class GATv2Conv(MessagePassing):
                 x_r = x_l
             else:
                 x_r = self.lin_r(x).view(-1, H, C)
-        else:
-            x_l, x_r = x[0], x[1]
-            assert x[0].dim() == 2
-
-            if x_r is not None and self.res is not None:
-                res = self.res(x_r)
-
-            x_l = self.lin_l(x_l).view(-1, H, C)
-            if x_r is not None:
-                x_r = self.lin_r(x_r).view(-1, H, C)
 
         assert x_l is not None
         assert x_r is not None
 
         if self.add_self_loops:
-            if isinstance(edge_index, Tensor):
-                num_nodes = x_l.size(0)
-                if x_r is not None:
-                    num_nodes = min(num_nodes, x_r.size(0))
-                edge_index, edge_attr = remove_self_loops(
-                    edge_index, edge_attr)
-                edge_index, edge_attr = add_self_loops(
-                    edge_index, edge_attr, fill_value=self.fill_value,
-                    num_nodes=num_nodes)
-            elif isinstance(edge_index, SparseTensor):
-                if self.edge_dim is None:
-                    edge_index = torch_sparse.set_diag(edge_index)
-                else:
-                    raise NotImplementedError(
-                        "The usage of 'edge_attr' and 'add_self_loops' "
-                        "simultaneously is currently not yet supported for "
-                        "'edge_index' in a 'SparseTensor' form")
+            # to make torch-script realise that edge_index is not a sparse Tensor
+            assert isinstance(edge_index, Tensor)
+            num_nodes = x_l.size(0)
+            if x_r is not None:
+                num_nodes = min(num_nodes, x_r.size(0))
+            edge_index, edge_attr = remove_self_loops(
+                edge_index, edge_attr)
+            edge_index, edge_attr = add_self_loops(
+                edge_index, edge_attr, fill_value=self.fill_value,
+                num_nodes=num_nodes)
 
         # edge_updater_type: (x: PairTensor, edge_attr: OptTensor)
         alpha = self.edge_updater(edge_index, x=(x_l, x_r),
@@ -339,18 +288,8 @@ class GATv2Conv(MessagePassing):
         if self.bias is not None:
             out = out + self.bias
 
-        if isinstance(return_attention_weights, bool):
-            if isinstance(edge_index, Tensor):
-                if is_torch_sparse_tensor(edge_index):
-                    # TODO TorchScript requires to return a tuple
-                    adj = set_sparse_value(edge_index, alpha)
-                    return out, (adj, alpha)
-                else:
-                    return out, (edge_index, alpha)
-            elif isinstance(edge_index, SparseTensor):
-                return out, edge_index.set_value(alpha, layout='coo')
-        else:
-            return out
+        # ignore the return_attention_weights option for now
+        return out
 
     def edge_update(self, x_j: Tensor, x_i: Tensor, edge_attr: OptTensor,
                     index: Tensor, ptr: OptTensor,
