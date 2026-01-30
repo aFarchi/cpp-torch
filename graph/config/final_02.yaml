@@ -1,0 +1,33 @@
+nodes:
+  hidden_1:
+    node_builder:
+      _target_: anemoi.graphs.nodes.TriNodes
+      resolution: 1
+  hidden_2:
+    node_builder:
+      _target_: anemoi.graphs.nodes.TriNodes
+      resolution: 2
+  hidden_3:
+    node_builder:
+      _target_: anemoi.graphs.nodes.TriNodes
+      resolution: 3
+
+edges:
+  - source_name: hidden_1
+    target_name: hidden_1
+    edge_builders:
+      - _target_: anemoi.graphs.edges.MultiScaleEdges
+        x_hops: 1
+        scale_resolutions: [1]
+  - source_name: hidden_2
+    target_name: hidden_2
+    edge_builders:
+      - _target_: anemoi.graphs.edges.MultiScaleEdges
+        x_hops: 1
+        scale_resolutions: [2]
+  - source_name: hidden_3
+    target_name: hidden_3
+    edge_builders:
+      - _target_: anemoi.graphs.edges.MultiScaleEdges
+        x_hops: 1
+        scale_resolutions: [3]

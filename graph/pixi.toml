@@ -1,0 +1,42 @@
+[workspace]
+authors = ["Alban Farchi <alban.farchi@enpc.fr>"]
+channels = ["conda-forge"]
+name = "graph"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+mg1 = "anemoi-graphs create config/final_01.yaml wdir/final_01.pt --overwrite"
+mg2 = "anemoi-graphs create config/final_02.yaml wdir/final_02.pt --overwrite"
+
+[dependencies]
+python = "3.12.*"
+numpy = ">=2.4.1,<3"
+hydra-core = ">=1.3.2,<2"
+networkx = ">=3.6.1,<4"
+plotly = ">=6.5.2,<7"
+scikit-learn = ">=1.8.0,<2"
+pytorch = ">=2.9.1,<3"
+torch-geometric = ">=2.6.1,<3"
+typeguard = ">=4.4.4,<5"
+aniso8601 = ">=10.0.0,<11"
+entrypoints = ">=0.4,<0.5"
+multiurl = ">=0.3.7,<0.4"
+pydantic = ">=2.12.5,<3"
+python-dateutil = ">=2.9.0.post0,<3"
+pyyaml = ">=6.0.3,<7"
+rich = ">=14.2.0,<15"
+tomli = ">=2.4.0,<3"
+tqdm = ">=4.67.1,<5"
+matplotlib = ">=3.10.8,<4"
+jupyterlab = ">=4.5.2,<5"
+netcdf4 = ">=1.7.4,<2"
+trimesh = ">=4.11.1,<5"
+cartopy = ">=0.25.0,<0.26"
+pyproj = ">=3.7.2,<4"
+xarray = ">=2025.12.0,<2026"
+h5netcdf = ">=1.8.1,<2"
+
+[pypi-dependencies]
+anemoi-graphs = ">=0.8.3, <0.9"
+h3 = "==3.7.7"
