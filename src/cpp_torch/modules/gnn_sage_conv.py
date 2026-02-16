@@ -5,7 +5,7 @@ from torch_geometric.nn import SAGEConv
 
 
 class SmallGNN(torch.nn.Module):
-    def __init__(self, batch_size):
+    def __init__(self):
         super().__init__()
         edge_index = torch.tensor([
             [0, 1, 1, 2],
@@ -14,8 +14,6 @@ class SmallGNN(torch.nn.Module):
         self.conv1 = SAGEConv(2, 4)
         self.conv2 = SAGEConv(4, 2)
         self.register_buffer('edge_index', edge_index)
-        if batch_size != 1:
-            raise ValueError('currently, only batch_size=1 is supported')
         self.input_shape = (3, 2)
         self.output_shape = (3, 2)
 

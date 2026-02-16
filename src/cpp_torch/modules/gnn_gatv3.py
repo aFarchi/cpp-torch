@@ -5,7 +5,7 @@ from cpp_torch.modules.custom_gat_conv import GATv2Conv
 
 
 class SmallGNN(torch.nn.Module):
-    def __init__(self, batch_size):
+    def __init__(self):
         super().__init__()
         edge_index = torch.tensor([
             [0, 1, 2, 3, 0, 2],
@@ -24,8 +24,6 @@ class SmallGNN(torch.nn.Module):
             concat=False,
         )
         self.register_buffer('edge_index', edge_index)
-        if batch_size != 1:
-            raise ValueError('currently, only batch_size=1 is supported')
         self.input_shape = (4, 2)
         self.output_shape = (4, 2)
 

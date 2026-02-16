@@ -22,23 +22,10 @@ def cli():
     default='small-mlp',
     help='name of the model to initialise (default "mlp")',
 )
-@click.option(
-    '-b',
-    '--batch-size',
-    default=8,
-    help='batch size to prepend to the input shape (default 8)',
-)
-def init(name, batch_size):
+def init(name):
     """Initialises the NN before the c++ run."""
     from cpp_torch.init_export import init_and_export
-    init_and_export(name, batch_size)
-
-
-@cli.command(name='check')
-def check():
-    """Checks the output of the c++ run."""
-    from cpp_torch.check import check
-    check()
+    init_and_export(name)
 
 
 if __name__ == '__main__':

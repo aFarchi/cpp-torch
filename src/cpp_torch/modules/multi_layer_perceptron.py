@@ -2,8 +2,9 @@ import torch
 
 
 class SmallMLP(torch.nn.Module):
-    def __init__(self, batch_size):
+    def __init__(self):
         super().__init__()
+        batch_size = 4
         self.fc1 = torch.nn.Linear(10, 32)
         self.relu = torch.nn.ReLU()
         self.fc2 = torch.nn.Linear(32, 5)

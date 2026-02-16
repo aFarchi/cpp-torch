@@ -6,28 +6,32 @@ class WrappedModule:
 
     def __init__(self, model):
         self.model = model
-        self.structure = dict(self.model.named_parameters())
+        self.structure = {
+            name: parameter.shape for (name, parameter) in self.model.named_parameters()
+        }
         self.x = None
         self.p = None
         self.named_p = None
         self.num_parameters = sum((
-            np.prod(v.shape)
-            for v in self.structure.values()
+            np.prod(shape)
+            for shape in self.structure.values()
         ))
+        self.input_shape = self.model.input_shape
+        self.output_shape = self.model.output_shape
 
-    def to_named_parameters(self, p):
+    def to_named_p(self, p):
         index = 0
-        named_parameters = {}
-        for (k, v) in self.structure.items():
-            size = np.prod(v.shape)
-            named_parameters[k] = p[index: index + size].reshape(v.shape)
+        named_p = {}
+        for (name, shape) in self.structure.items():
+            size = np.prod(shape)
+            named_p[name] = p[index: index + size].reshape(shape)
             index += size
         if index != p.shape[0]:
             raise ValueError('something went wrong in the parameter conversion')
-        return named_parameters
+        return named_p
 
     @staticmethod
-    def flatten_parameters(named_p):
+    def to_p(named_p):
         return torch.cat([
             v.flatten()
             for v in named_p.values()
@@ -37,21 +41,24 @@ class WrappedModule:
         return functional_call(self.model, named_p, x)
 
     def forward(self, p, x):
-        x = x.reshape(self.model.input_shape)
         self.p = p
         self.x = x
-        self.named_p = self.to_named_parameters(p)
-        y = self.named_forward(self.named_p, self.x)
-        return y.reshape(-1)
+        self.named_p = self.to_named_p(p)
+        return self.named_forward(self.named_p, self.x)
 
     def apply_tl(self, dp, dx):
-        dx = dx.reshape(self.model.input_shape)
-        named_dp = self.to_named_parameters(dp)
-        return jvp(self.named_forward, (self.named_p, self.x), (named_dp, dx))[1].reshape(-1)
+        named_dp = self.to_named_p(dp)
+        return jvp(
+            self.named_forward,
+            (self.named_p, self.x),
+            (named_dp, dx),
+        )[1]
 
     def apply_ad(self, dy):
-        dy = dy.reshape(self.model.output_shape)
         _, vjp_fn = vjp(self.named_forward, self.named_p, self.x)
-        dp, dx = vjp_fn(dy)
-        dp_flat = self.flatten_parameters(dp)
-        return dp_flat, dx.reshape(-1)
+        named_dp, dx = vjp_fn(dy)
+        return self.to_p(named_dp), dx
+
+    def save_scripted_model(self, filename):
+        scripted_model = torch.jit.script(self.model)
+        scripted_model.save(filename)
