@@ -67,8 +67,11 @@ def init_and_export(name):
     logger.info(f'creating model "{name}"')
     model = construct_module(name)
 
+    logger.info(f'creating second model (only to get random parameters) "{name}"')
+    model_clone = construct_module(name)
+    p = model_clone.get_parameters()
+
     logger.info('creating random inputs')
-    p = torch.randn(model.num_parameters)
     x = torch.randn(model.input_shape)
     dx = torch.randn(model.input_shape)
     dy = torch.randn(model.output_shape)
@@ -87,8 +90,10 @@ def init_and_export(name):
     out_tl_p = model.apply_tl(dp, dx_0)
 
     logger.info('computing adjoint test')
-    dot_1 = np.array([out_ad_p @ dp + out_ad_x.flatten() @ dx.flatten()])
-    dot_2 = np.array([(out_tl_x.flatten() + out_tl_p.flatten()) @ dy.flatten()])
+    dot_1 = out_ad_p @ dp + out_ad_x.flatten() @ dx.flatten()
+    dot_1 = np.array([dot_1.detach().numpy()])
+    dot_2 = (out_tl_x.flatten() + out_tl_p.flatten()) @ dy.flatten()
+    dot_2 = np.array([dot_2.detach().numpy()])
     compare_arrays('dot', dot_1, dot_2, rtol=1e-5, atol=0, n_first=1)
 
     for (name, tensor) in {

@@ -19,6 +19,10 @@ class WrappedModule:
         self.input_shape = self.model.input_shape
         self.output_shape = self.model.output_shape
 
+    def get_parameters(self):
+        named_p = dict(self.model.named_parameters())
+        return self.to_p(named_p)
+
     def to_named_p(self, p):
         index = 0
         named_p = {}
