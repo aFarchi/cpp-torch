@@ -7,7 +7,7 @@
 #include <vector>
 
 // dump tensor to binary
-void dump(const std::string& name, const torch::Tensor& t) {
+void dump(const std::string& name, const torch::Tensor & t) {
     std::ofstream f(name, std::ios::binary);
     auto cpu = t.detach().cpu().contiguous();
     std::cout << "writing " << name << std::endl;
@@ -64,7 +64,7 @@ class ScriptedModule {
             }
             return torch::Tensor();
         }
-        std::vector<torch::Tensor> unflatten(torch::Tensor flat_p) const {
+        std::vector<torch::Tensor> unflatten(const torch::Tensor & flat_p) const {
             std::vector<torch::Tensor> p;
             std::int64_t start = 0;
             for (const auto& t : m_parameters) {
@@ -74,7 +74,7 @@ class ScriptedModule {
             }
             return p;
         }
-        void reset_parameters(torch::Tensor flat_p) {
+        void reset_parameters(const torch::Tensor & flat_p) {
             std::vector<torch::Tensor> p(unflatten(flat_p));
             torch::autograd::GradMode::set_enabled(false);
             for (int i = 0; i < m_parameters.size(); ++i) {
@@ -82,12 +82,12 @@ class ScriptedModule {
             }
             torch::autograd::GradMode::set_enabled(true);
         }
-        torch::Tensor forward(torch::Tensor x) {
+        torch::Tensor forward(const torch::Tensor & x) {
             m_x = x.requires_grad_(true);
             m_y = m_model.forward({m_x}).toTensor();
             return m_y;
         }
-        torch::Tensor apply_ad_state(torch::Tensor dy) {
+        torch::Tensor apply_ad_state(const torch::Tensor & dy) {
             return torch::autograd::grad(
                 {m_y},
                 {m_x},
@@ -95,7 +95,7 @@ class ScriptedModule {
                 true // retain_graph
             )[0];
         }
-        torch::Tensor apply_ad_parameters(torch::Tensor dy) {
+        torch::Tensor apply_ad_parameters(const torch::Tensor & dy) {
             return flatten(torch::autograd::grad(
                 {m_y},
                 m_parameters,
@@ -103,7 +103,7 @@ class ScriptedModule {
                 true // retain_graph
             ));
         }
-        torch::Tensor apply_tl_state(torch::Tensor dx) {
+        torch::Tensor apply_tl_state(const torch::Tensor & dx) {
             torch::Tensor dummy = torch::randn(m_output_shape).requires_grad_(true);
             torch::Tensor Fx_dummy = torch::autograd::grad(
                 {m_y},
@@ -118,7 +118,7 @@ class ScriptedModule {
                 {dx}
             )[0];
         }
-        torch::Tensor apply_tl_parameters(torch::Tensor dp) {
+        torch::Tensor apply_tl_parameters(const torch::Tensor & dp) {
             std::vector<torch::Tensor> dp_unflatten(unflatten(dp));
             torch::Tensor dummy = torch::randn(m_output_shape).requires_grad_(true);
             auto Fp_dummy = torch::autograd::grad(
@@ -139,7 +139,7 @@ class ScriptedModule {
             }
             return Fp_dp;
         }
-        torch::Tensor apply_tl_parameters_v2(torch::Tensor dp) {
+        torch::Tensor apply_tl_parameters_v2(const torch::Tensor & dp) {
             std::vector<torch::Tensor> dp_unflatten(unflatten(dp));
             torch::Tensor dummy = torch::randn(m_output_shape).requires_grad_(true);
             auto Fp_dummy = torch::autograd::grad(
@@ -173,11 +173,11 @@ class ScriptedModule {
 };
 
 // print first n elements of a tensor
-void print_first_n(std::string name, const torch::Tensor tensor, int n_first) {
-    torch::Tensor flat = tensor.detach().to(torch::kCPU).flatten();
-    int64_t count = std::min<int64_t>(n_first, flat.numel());
+void print_first_n(std::string name, const torch::Tensor & tensor, int n_first) {
+    torch::Tensor flat = tensor.flatten();
+    int count = std::min<int>(n_first, flat.numel());
     std::cout << name << " ";
-    for (int64_t i = 0; i < count; ++i) {
+    for (int i = 0; i < count; ++i) {
         std::cout << flat[i].item<double>() << " ";
     }
     std::cout << std::endl;
@@ -186,18 +186,18 @@ void print_first_n(std::string name, const torch::Tensor tensor, int n_first) {
 // print the absolute or relative difference between the first n elements of two tensors
 void print_diff_first_n(
     std::string name,
-    const torch::Tensor predicted,
-    const torch::Tensor expected,
+    const torch::Tensor & predicted,
+    const torch::Tensor & expected,
     int n_first,
     bool relative
 ) {
-    torch::Tensor flat_predicted = predicted.detach().to(torch::kCPU).flatten();
-    torch::Tensor flat_expected = expected.detach().to(torch::kCPU).flatten();
-    int64_t count_1 = std::min<int64_t>(n_first, flat_predicted.numel());
-    int64_t count_2 = std::min<int64_t>(n_first, flat_expected.numel());
-    int64_t count = std::min<int64_t>(count_1, count_2);
+    torch::Tensor flat_predicted = predicted.flatten();
+    torch::Tensor flat_expected = expected.flatten();
+    int count_1 = std::min<int>(n_first, flat_predicted.numel());
+    int count_2 = std::min<int>(n_first, flat_expected.numel());
+    int count = std::min<int>(count_1, count_2);
     std::cout << name << " ";
-    for (int64_t i = 0; i < count; ++i) {
+    for (int i = 0; i < count; ++i) {
         double p = flat_predicted[i].item<double>();
         double e = flat_expected[i].item<double>();
         if (relative)
@@ -215,14 +215,14 @@ void print_diff_first_n(
 }
 
 // check if two tensors are (element-wise) close given absolute and relative tolerance
-bool all_close(const torch::Tensor predicted, const torch::Tensor expected, double atol, double rtol) {
-    torch::Tensor flat_predicted = predicted.detach().to(torch::kCPU).flatten();
-    torch::Tensor flat_expected = expected.detach().to(torch::kCPU).flatten();
+bool all_close(const torch::Tensor & predicted, const torch::Tensor & expected, double atol, double rtol) {
+    torch::Tensor flat_predicted = predicted.flatten();
+    torch::Tensor flat_expected = expected.flatten();
     if ( flat_predicted.numel() != flat_expected.numel() )
     {
         return false;
     }
-    for (int64_t i = 0; i < flat_predicted.numel(); ++i) {
+    for (int i = 0; i < flat_predicted.numel(); ++i) {
         double p = flat_predicted[i].item<double>();
         double e = flat_expected[i].item<double>();
         if ( abs(p - e) > atol + rtol * abs(e) )
@@ -234,15 +234,15 @@ bool all_close(const torch::Tensor predicted, const torch::Tensor expected, doub
 }
 
 // compute the maximum absolute difference between two tensors
-double max_abs_diff(const torch::Tensor predicted, const torch::Tensor expected) {
-    torch::Tensor flat_predicted = predicted.detach().to(torch::kCPU).flatten();
-    torch::Tensor flat_expected = expected.detach().to(torch::kCPU).flatten();
+double max_abs_diff(const torch::Tensor & predicted, const torch::Tensor & expected) {
+    torch::Tensor flat_predicted = predicted.flatten();
+    torch::Tensor flat_expected = expected.flatten();
     if ( flat_predicted.numel() != flat_expected.numel() )
     {
         return -1;
     }
     double maxi = 0;
-    for (int64_t i = 0; i < flat_predicted.numel(); ++i) {
+    for (int i = 0; i < flat_predicted.numel(); ++i) {
         double p = flat_predicted[i].item<double>();
         double e = flat_expected[i].item<double>();
         maxi = std::max<double>(maxi, abs(p-e));
@@ -251,15 +251,15 @@ double max_abs_diff(const torch::Tensor predicted, const torch::Tensor expected)
 }
 
 // compute the maximum relative difference between two tensors
-double max_rel_diff(const torch::Tensor predicted, const torch::Tensor expected) {
-    torch::Tensor flat_predicted = predicted.detach().to(torch::kCPU).flatten();
-    torch::Tensor flat_expected = expected.detach().to(torch::kCPU).flatten();
+double max_rel_diff(const torch::Tensor & predicted, const torch::Tensor & expected) {
+    torch::Tensor flat_predicted = predicted.flatten();
+    torch::Tensor flat_expected = expected.flatten();
     if ( flat_predicted.numel() != flat_expected.numel() )
     {
         return -1;
     }
     double maxi = 0;
-    for (int64_t i = 0; i < flat_predicted.numel(); ++i) {
+    for (int i = 0; i < flat_predicted.numel(); ++i) {
         double p = flat_predicted[i].item<double>();
         double e = flat_expected[i].item<double>();
         maxi = std::max<double>(maxi, abs(p-e)/abs(e));
@@ -270,8 +270,8 @@ double max_rel_diff(const torch::Tensor predicted, const torch::Tensor expected)
 // compare tensors
 void compare_tensors(
     std::string title,
-    torch::Tensor predicted,
-    torch::Tensor expected,
+    const torch::Tensor & predicted,
+    const torch::Tensor & expected,
     int n_first,
     double atol,
     double rtol
@@ -296,15 +296,15 @@ void compare_tensors(
 }
 
 // compute dot product (manually)
-double dot_product(torch::Tensor tensor_1, torch::Tensor tensor_2) {
-    torch::Tensor flat_1 = tensor_1.detach().to(torch::kCPU).flatten();
-    torch::Tensor flat_2 = tensor_2.detach().to(torch::kCPU).flatten();
+double dot_product(const torch::Tensor & tensor_1, const torch::Tensor & tensor_2) {
+    torch::Tensor flat_1 = tensor_1.flatten();
+    torch::Tensor flat_2 = tensor_2.flatten();
     if ( flat_1.numel() != flat_2.numel() )
     {
         return -1;
     }
     double dot = 0;
-    for (int64_t i = 0; i < flat_1.numel(); ++i) {
+    for (int i = 0; i < flat_1.numel(); ++i) {
         double e_1 = flat_1[i].item<double>();
         double e_2 = flat_2[i].item<double>();
         dot += e_1 * e_2;
@@ -314,13 +314,13 @@ double dot_product(torch::Tensor tensor_1, torch::Tensor tensor_2) {
 
 // compute adjoint test
 void adjoint_test(
-    torch::Tensor dp,
-    torch::Tensor dx,
-    torch::Tensor dy,
-    torch::Tensor output_ad_p,
-    torch::Tensor output_ad_x,
-    torch::Tensor output_tl_p,
-    torch::Tensor output_tl_x
+    const torch::Tensor & dp,
+    const torch::Tensor & dx,
+    const torch::Tensor & dy,
+    const torch::Tensor & output_ad_p,
+    const torch::Tensor & output_ad_x,
+    const torch::Tensor & output_tl_p,
+    const torch::Tensor & output_tl_x
 ) {
     double dot_1 = dot_product(
         output_ad_p,
