@@ -8,6 +8,7 @@ version = "0.1.0"
 [tasks]
 mg1 = "anemoi-graphs create config/final_01.yaml wdir/final_01.pt --overwrite"
 mg2 = "anemoi-graphs create config/final_02.yaml wdir/final_02.pt --overwrite"
+mg = "anemoi-graphs create config/graph.yaml wdir/graph.pt --overwrite"
 
 [dependencies]
 python = "3.12.*"
