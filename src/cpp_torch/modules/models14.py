@@ -652,6 +652,8 @@ class ZigasDecoder(ProgressiveDecoder):
         self.load_state_dict(self._decoder_state_dict_from_full_checkpoint(state_dict))
         self.to(device)
         self.eval()
+        self.input_shape = (8929, 64)
+        self.output_shape = (35718, 114)
 
     @staticmethod
     def _clean_state_dict(state_dict, prefixes=("_orig_mod.",)):
