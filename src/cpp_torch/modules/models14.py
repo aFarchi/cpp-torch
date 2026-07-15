@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from torch_geometric.nn import TransformerConv, LayerNorm
 from torch_geometric.utils import softmax as pyg_softmax
 from torch.utils.checkpoint import checkpoint
 import re
+from pathlib import Path
 from typing import List, Dict, Optional
 
 EDGE_DIM = 4   # [dlat, sin(dlon_wrap), cos(dlon_wrap), log(haversine+eps)]
@@ -552,6 +554,151 @@ class ProgressiveDecoder(nn.Sequential):
         ))
 
 
+class ZigasDecoder(ProgressiveDecoder):
+
+    def __init__(
+        self,
+        base_dir: Optional[Path] = None,
+        exp_id: str = 'v94',
+        n_subgraphs: int = 6,
+        static_vars: Optional[List[str]] = None,
+        latent_dim: int = 64,
+        out_dim: int = 114,
+        decoder_hidden_dims: Optional[List[int]] = None,
+        heads: int = 4,
+        gat_dropout: float = 0.1,
+        feature_dropout: float = 0.1,
+        decoder_mlp_ratio: float = 2.0,
+        pooling_schedule: Optional[List[int]] = None,
+        unpooling_schedule: Optional[List[int]] = None,
+        weights_filename: Optional[str] = None,
+        device: Optional[torch.device] = None,
+    ):
+        if base_dir is None:
+            base_dir = Path(__file__).resolve().parent
+        if static_vars is None:
+            static_vars = ["sin_lat", "cos_lat", "sin_lon", "cos_lon", "lnsurfgeo", "lsm"]
+        if decoder_hidden_dims is None:
+            decoder_hidden_dims = [96, 128, 192, 256, 256]
+        if pooling_schedule is None:
+            pooling_schedule = [2]
+        if unpooling_schedule is None:
+            unpooling_schedule = [3]
+        if weights_filename is None:
+            weights_filename = f'{exp_id}_best_model.pt'
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        graph_dir = base_dir / 'graph'
+        data_dir = base_dir / 'data'
+        weights_dir = base_dir / 'weights'
+
+        # Allow loading checkpoints that include NumPy globals.
+        torch.serialization.add_safe_globals([np.dtype, np.ndarray, np._core.multiarray._reconstruct])
+
+        graphs = [
+            torch.load(graph_dir / f'{exp_id}_edge_index_ae_{lev}.pt')
+            for lev in range(n_subgraphs + 1)
+        ]
+        edge_attrs = torch.load(graph_dir / f'{exp_id}_edge_attrs.pt')
+        level_connections_local = torch.load(graph_dir / f'{exp_id}_level_connections_local.pt')
+        unpool_level_connections_local = torch.load(
+            graph_dir / f'{exp_id}_unpool_level_connections_local.pt')
+        node_mappings = torch.load(graph_dir / f'{exp_id}_node_mappings.pt', weights_only=False)
+        unpool_edge_attrs = torch.load(graph_dir / f'{exp_id}_unpool_interlevel_edge_attrs.pt')
+
+        graphs = [g.to(device) for g in graphs]
+
+        statics_full = torch.tensor(
+            np.stack([np.load(data_dir / f'{v}.npy') for v in static_vars], axis=-1),
+            dtype=torch.float32)
+        decoder_static_feats = [
+            statics_full[torch.as_tensor(node_mappings[lev], dtype=torch.long)]
+            for lev in range(len(graphs))
+        ]
+
+        level_connections = level_connections_local[:len(pooling_schedule)]
+        unpool_level_connections = unpool_level_connections_local[:len(pooling_schedule)]
+        graphs = graphs[:len(pooling_schedule) + 1]
+        unpooling_schedule = unpooling_schedule[:len(level_connections)]
+        edge_attrs = edge_attrs[:len(pooling_schedule) + 1]
+        unpool_edge_attrs = list(reversed(unpool_edge_attrs[:len(pooling_schedule)]))[:len(unpooling_schedule)]
+        decoder_static_feats = decoder_static_feats[:len(pooling_schedule) + 1]
+
+        super().__init__(
+            latent_dim=latent_dim,
+            hidden_dims=decoder_hidden_dims,
+            out_dim=out_dim,
+            graphs=graphs,
+            level_connections=list(reversed(unpool_level_connections)),
+            unpooling_schedule=unpooling_schedule,
+            edge_attrs=edge_attrs,
+            interlevel_edge_attrs=unpool_edge_attrs,
+            static_feats=decoder_static_feats,
+            heads=heads,
+            gat_dropout=gat_dropout,
+            feature_dropout=feature_dropout,
+            decoder_mlp_ratio=decoder_mlp_ratio,
+            use_residualsIO=True,
+        )
+
+        self.exp_id = exp_id
+        self.latent_dim = latent_dim
+        self.out_dim = out_dim
+        self.device_ref = device
+
+        state_dict = torch.load(weights_dir / weights_filename, map_location=device)
+        state_dict = self._clean_state_dict(state_dict)
+        self.load_state_dict(self._decoder_state_dict_from_full_checkpoint(state_dict))
+        self.to(device)
+        self.eval()
+
+    @staticmethod
+    def _clean_state_dict(state_dict, prefixes=("_orig_mod.",)):
+        cleaned = {}
+        for k, v in state_dict.items():
+            new_k = k
+            for p in prefixes:
+                if new_k.startswith(p):
+                    new_k = new_k[len(p):]
+            cleaned[new_k] = v
+        return cleaned
+
+    @staticmethod
+    def _decoder_state_dict_from_full_checkpoint(full_state_dict):
+        out = {}
+        for key, value in full_state_dict.items():
+            if not key.startswith("decoder."):
+                continue
+
+            k = key
+            if k.startswith("decoder.gat_blocks."):
+                m = re.match(r"^decoder\.gat_blocks\.(\d+)\.(.+)$", k)
+                if m is not None:
+                    idx = int(m.group(1)) + 1
+                    k = f"decoder.gat_stage_{idx}.gat_block.{m.group(2)}"
+            elif k.startswith("decoder.unpoolers."):
+                m = re.match(r"^decoder\.unpoolers\.(\d+)\.(.+)$", k)
+                if m is not None:
+                    layer_idx = m.group(1)
+                    k = f"decoder.unpool_and_film_{layer_idx}.unpooler.{m.group(2)}"
+            elif k.startswith("decoder.static_films."):
+                m = re.match(r"^decoder\.static_films\.(\d+)\.(.+)$", k)
+                if m is not None:
+                    layer_idx = m.group(1)
+                    k = f"decoder.unpool_and_film_{layer_idx}.film.{m.group(2)}"
+            elif k.startswith("decoder.output_proj."):
+                k = k.replace("decoder.output_proj.", "decoder.output_head.output_proj.", 1)
+            elif k.startswith("decoder.output_residual."):
+                k = k.replace("decoder.output_residual.", "decoder.output_head.output_residual.", 1)
+
+            if re.match(r"^decoder\.static_feats_\d+$", k):
+                continue
+
+            out[k[len("decoder."):]] = value
+
+        return out
+        
 # ===========================================================================
 # Full autoencoder
 # ===========================================================================
