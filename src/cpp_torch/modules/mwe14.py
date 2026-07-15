@@ -49,6 +49,7 @@ USE_VAE = True
 FREE_BITS = 0.5
 ENCODER_MLP_RATIO = 4.0
 DECODER_MLP_RATIO = 2.0
+SEED = 12345
 
 
 def clean_state_dict(state_dict, prefixes=("_orig_mod.",)):
@@ -65,6 +66,12 @@ def clean_state_dict(state_dict, prefixes=("_orig_mod.",)):
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
+
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
+print(f"Random seed: {SEED}")
 
 # -----------------------------
 # Load precomputed graph hierarchy (mirrors normal_ae.py's loading branch)
