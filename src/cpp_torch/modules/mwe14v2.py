@@ -224,16 +224,14 @@ out_path = BASE / "output/decoded_output_14v2.pt"
 torch.save(decoded.cpu(), out_path)
 print(f"Saved decoded output to {out_path}")
 
-"""
 print('registering buffers')
 for (name, tensor) in {
-    'in_x': z,
+    'in_forward': z,
     'out_forward': decoded,
     }.items():
     decoder.register_buffer(name, tensor)
 
-filename = 'scripted_model.pt'
+filename = 'output/scripted_decoder.pt'
 print(f'saving scripted model into "{filename}"')
 scripted_model = torch.jit.script(decoder)
 scripted_model.save(filename)
-"""
