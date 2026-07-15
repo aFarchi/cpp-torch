@@ -21,3 +21,10 @@ wdir/
 
 # c++
 src/cpp_main/CMakeLists.txt
+
+# tmp
+src/cpp_torch/modules/data
+src/cpp_torch/modules/graph
+src/cpp_torch/modules/output
+src/cpp_torch/modules/weights
+

@@ -1,5 +1,5 @@
 """Minimal working example: decode a random latent tensor with the trained
-v94 ProgressiveGraphAutoencoder decoder (models13.py).
+v94 ProgressiveGraphAutoencoder decoder (models14.py).
 
 Self-contained: every file this script needs lives under test_mwe/
 (graph/, weights/, data/, models13.py). Run with:
@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from models13 import ProgressiveGraphAutoencoder
+from models14 import ProgressiveGraphAutoencoder
 
 #==================================================
 # AF
@@ -144,10 +144,11 @@ print(f"decoded stats -> mean: {decoded.mean().item():.4f}, "
         f"std: {decoded.std().item():.4f}, "
         f"min: {decoded.min().item():.4f}, max: {decoded.max().item():.4f}")
 
-out_path = BASE / "decoded_output.pt"
+out_path = BASE / "output/decoded_output_14.pt"
 torch.save(decoded.cpu(), out_path)
 print(f"Saved decoded output to {out_path}")
 
+"""
 print('registering buffers')
 for (name, tensor) in {
     'in_x': z,
@@ -159,3 +160,4 @@ filename = 'scripted_model.pt'
 print(f'saving scripted model into "{filename}"')
 scripted_model = torch.jit.script(model)
 scripted_model.save(filename)
+"""
