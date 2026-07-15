@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import TransformerConv, LayerNorm
 from torch_geometric.utils import softmax as pyg_softmax
 from torch.utils.checkpoint import checkpoint
+import re
 from typing import List, Dict, Optional
 
 EDGE_DIM = 4   # [dlat, sin(dlon_wrap), cos(dlon_wrap), log(haversine+eps)]
@@ -243,8 +244,10 @@ class GraphGATBlock(nn.Module):
                  edge_attr: Optional[torch.Tensor] = None):
         super().__init__()
         self.gat_block = gat_block
-        self.register_buffer('edge_index', edge_index)
-        self.register_buffer('edge_attr', edge_attr)
+        # Structural tensors come from config data and should not participate
+        # in checkpoint key matching.
+        self.register_buffer('edge_index', edge_index, persistent=False)
+        self.register_buffer('edge_attr', edge_attr, persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.gat_block(x, self.edge_index, self.edge_attr)
@@ -258,7 +261,8 @@ class UnpoolAndStaticFilmBlock(nn.Module):
         self.unpooler = unpooler
         self.has_static = static_feat is not None
         if self.has_static:
-            self.register_buffer('static_feat', static_feat)
+            # Static fields are deterministic inputs, not learned state.
+            self.register_buffer('static_feat', static_feat, persistent=False)
             self.film = nn.Linear(static_feat.shape[-1], in_dim * 2)
             nn.init.zeros_(self.film.weight)
             nn.init.zeros_(self.film.bias)
@@ -619,6 +623,55 @@ class ProgressiveGraphAutoencoder(nn.Module):
             feature_dropout=feature_dropout,
             decoder_mlp_ratio=decoder_mlp_ratio,
             use_residualsIO=use_residualsIO, log=log)
+
+    @staticmethod
+    def _remap_legacy_decoder_key(key: str) -> Optional[str]:
+        """Map models13 decoder keys to models14 key layout.
+
+        models14 changed decoder module paths to support a Sequential pipeline.
+        This keeps checkpoint loading backward-compatible.
+        """
+        if not key.startswith('decoder.'):
+            return key
+
+        if key.startswith('decoder.gat_blocks.'):
+            m = re.match(r'^decoder\.gat_blocks\.(\d+)\.(.+)$', key)
+            if m is not None:
+                idx = int(m.group(1)) + 1
+                return f'decoder.gat_stage_{idx}.gat_block.{m.group(2)}'
+
+        if key.startswith('decoder.output_proj.'):
+            return key.replace('decoder.output_proj.', 'decoder.output_head.output_proj.', 1)
+
+        if key.startswith('decoder.output_residual.'):
+            return key.replace('decoder.output_residual.', 'decoder.output_head.output_residual.', 1)
+
+        if key.startswith('decoder.unpoolers.'):
+            m = re.match(r'^decoder\.unpoolers\.(\d+)\.(.+)$', key)
+            if m is not None:
+                layer_idx = m.group(1)
+                return f'decoder.unpool_and_film_{layer_idx}.unpooler.{m.group(2)}'
+
+        if key.startswith('decoder.static_films.'):
+            m = re.match(r'^decoder\.static_films\.(\d+)\.(.+)$', key)
+            if m is not None:
+                layer_idx = m.group(1)
+                return f'decoder.unpool_and_film_{layer_idx}.film.{m.group(2)}'
+
+        # models13 persisted static feature buffers as decoder.static_feats_{layer}
+        # while models14 treats static features as non-persistent structural data.
+        if re.match(r'^decoder\.static_feats_\d+$', key):
+            return None
+
+        return key
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        remapped = {}
+        for key, value in state_dict.items():
+            new_key = self._remap_legacy_decoder_key(key)
+            if new_key is not None:
+                remapped[new_key] = value
+        return super().load_state_dict(remapped, strict=strict, assign=assign)
 
     def forward(self, x: torch.Tensor, return_latent: bool = False):
         z, mu, logvar = self.encoder(x)
