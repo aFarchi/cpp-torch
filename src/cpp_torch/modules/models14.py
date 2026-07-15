@@ -275,11 +275,92 @@ class UnpoolAndStaticFilmBlock(nn.Module):
         return x
 
 
+class InputProjResidualBlock(nn.Module):
+    """Encoder input projection + norm/activation/dropout + optional residual."""
+    def __init__(self, in_dim: int, out_dim: int,
+                 feature_dropout: float, use_residualsIO: bool):
+        super().__init__()
+        self.input_proj = nn.Linear(in_dim, out_dim)
+        self.input_norm = LayerNorm(out_dim)
+        self.feature_dropout = feature_dropout
+        self.input_residual = (ResidualBlock(in_dim, out_dim, feature_dropout * 0.5)
+                               if use_residualsIO else None)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_in = x
+        x = F.gelu(self.input_norm(self.input_proj(x)), approximate='tanh')
+        x = F.dropout(x, p=self.feature_dropout, training=self.training)
+        if self.input_residual is not None:
+            x = self.input_residual(x_in, x)
+        return x
+
+
+class AttentionPoolBlock(nn.Module):
+    """Wrap AttentionPooling as a simple Sequential stage."""
+    def __init__(self, pooler: AttentionPooling):
+        super().__init__()
+        self.pooler = pooler
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.pooler(x)
+
+
+class VAELatentHead(nn.Module):
+    """VAE latent projection head producing (z, mu, logvar)."""
+    def __init__(self, in_dim: int, latent_dim: int, feature_dropout: float):
+        super().__init__()
+        mid = max(latent_dim * 2, in_dim)
+        self.latent_trunk = nn.Sequential(
+            nn.Linear(in_dim, mid),
+            nn.GELU(approximate='tanh'),
+            nn.Dropout(feature_dropout),
+        )
+        self.mu_head = nn.Linear(mid, latent_dim)
+        self.logvar_head = nn.Linear(mid, latent_dim)
+
+    def forward(self, x: torch.Tensor):
+        h = self.latent_trunk(x)
+        mu = self.mu_head(h)
+        logvar = self.logvar_head(h).clamp(-30., 20.)
+        if self.training:
+            z = mu + torch.exp(0.5 * logvar) * torch.randn_like(mu)
+        else:
+            z = mu
+        return z, mu, logvar
+
+
+class AELatentHead(nn.Module):
+    """AE latent projection head producing (z, None, None)."""
+    def __init__(self, in_dim: int, latent_dim: int,
+                 feature_dropout: float,
+                 latent_dropout: float,
+                 latent_noise_std: float):
+        super().__init__()
+        mid = max(latent_dim * 2, in_dim)
+        self.latent_proj = nn.Sequential(
+            nn.Linear(in_dim, mid),
+            nn.GELU(approximate='tanh'),
+            nn.Dropout(feature_dropout),
+            nn.Linear(mid, latent_dim),
+        )
+        self.latent_dropout = latent_dropout
+        self.latent_noise_std = latent_noise_std
+
+    def forward(self, x: torch.Tensor):
+        x = self.latent_proj(x)
+        if self.training:
+            if self.latent_dropout > 0:
+                x = F.dropout(x, p=self.latent_dropout, training=True)
+            if self.latent_noise_std > 0:
+                x = x + torch.randn_like(x) * self.latent_noise_std
+        return x, None, None
+
+
 # ===========================================================================
 # Progressive Encoder
 # ===========================================================================
 
-class ProgressiveEncoder(nn.Module):
+class ProgressiveEncoder(nn.Sequential):
     def __init__(self, in_dim: int, hidden_dims: List[int], latent_dim: int,
                  graphs: List[torch.Tensor],
                  level_connections: List[Dict[int, List[int]]],
@@ -311,87 +392,71 @@ class ProgressiveEncoder(nn.Module):
         all_dims = [in_dim] + hidden_dims + [latent_dim]
         edge_dim = EDGE_DIM if edge_attrs is not None else 0
 
-        self.input_proj     = nn.Linear(in_dim, all_dims[1])
-        self.input_norm     = LayerNorm(all_dims[1])
-        self.input_residual = (ResidualBlock(in_dim, all_dims[1], feature_dropout * 0.5)
-                               if use_residualsIO else None)
+        input_block = InputProjResidualBlock(
+            in_dim=in_dim,
+            out_dim=all_dims[1],
+            feature_dropout=feature_dropout,
+            use_residualsIO=use_residualsIO,
+        )
+        self.add_module('input_block', input_block)
 
-        self.gat_blocks = nn.ModuleList([
+        gat_blocks = nn.ModuleList([
             GATBlock(all_dims[i], all_dims[i + 1], heads,
                      gat_dropout, feature_dropout,
                      mlp_ratio=encoder_mlp_ratio, edge_dim=edge_dim)
             for i in range(1, len(all_dims) - 2)
         ])
 
-        mid = max(latent_dim * 2, all_dims[-2])
-        if vae:
-            self.latent_trunk = nn.Sequential(
-                nn.Linear(all_dims[-2], mid),
-                nn.GELU(approximate='tanh'),
-                nn.Dropout(feature_dropout),
-            )
-            self.mu_head     = nn.Linear(mid, latent_dim)
-            self.logvar_head = nn.Linear(mid, latent_dim)
-        else:
-            self.latent_proj = nn.Sequential(
-                nn.Linear(all_dims[-2], mid),
-                nn.GELU(approximate='tanh'),
-                nn.Dropout(feature_dropout),
-                nn.Linear(mid, latent_dim),
-            )
-
-        self.poolers = nn.ModuleDict()
+        poolers = nn.ModuleDict()
         for pool_step, layer_idx in enumerate(self.pooling_schedule):
             out_f   = all_dims[layer_idx + 1]
             pool_ea = (interlevel_edge_attrs[pool_step]
                        if interlevel_edge_attrs is not None else None)
-            self.poolers[str(layer_idx)] = AttentionPooling(
+            poolers[str(layer_idx)] = AttentionPooling(
                 level_connections[pool_step], in_dim=out_f, num_heads=heads,
                 edge_attr=pool_ea)
 
-    def _maybe_pool(self, x, layer_idx, pooling_step, graph_level):
-        if layer_idx in self.pooling_schedule and pooling_step < len(self.level_connections):
-            x = self.poolers[str(layer_idx)](x)
-            return x, pooling_step + 1, graph_level + 1
-        return x, pooling_step, graph_level
+        # Build encoder stages in forward execution order, equivalent to
+        # the previous non-checkpointed path.
+        graph_level = 0
+        if 0 in self.pooling_schedule:
+            self.add_module('pool_stage_0', AttentionPoolBlock(poolers['0']))
+            graph_level += 1
+
+        for i, blk in enumerate(gat_blocks):
+            layer_idx = i + 1
+            ea = getattr(self, f'edge_attr_{graph_level}') if self._n_edge_attrs > 0 else None
+            self.add_module(
+                f'gat_stage_{layer_idx}',
+                GraphGATBlock(gat_block=blk,
+                              edge_index=self.graphs[graph_level],
+                              edge_attr=ea),
+            )
+
+            if layer_idx in self.pooling_schedule:
+                self.add_module(
+                    f'pool_stage_{layer_idx}',
+                    AttentionPoolBlock(poolers[str(layer_idx)]),
+                )
+                graph_level += 1
+
+        if vae:
+            self.add_module('latent_head', VAELatentHead(
+                in_dim=all_dims[-2],
+                latent_dim=latent_dim,
+                feature_dropout=feature_dropout,
+            ))
+        else:
+            self.add_module('latent_head', AELatentHead(
+                in_dim=all_dims[-2],
+                latent_dim=latent_dim,
+                feature_dropout=feature_dropout,
+                latent_dropout=latent_dropout,
+                latent_noise_std=latent_noise_std,
+            ))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        pooling_step = 0
-        graph_level  = 0
-
-        x_in = x
-        x = F.gelu(self.input_norm(self.input_proj(x)), approximate='tanh')
-        x = F.dropout(x, p=self.feature_dropout, training=self.training)
-        if self.input_residual is not None:
-            x = self.input_residual(x_in, x)
-        x, pooling_step, graph_level = self._maybe_pool(x, 0, pooling_step, graph_level)
-
-        for i, blk in enumerate(self.gat_blocks):
-            layer_idx = i + 1
-            edge_idx  = self.graphs[graph_level]
-            ea        = getattr(self, f'edge_attr_{graph_level}') if self._n_edge_attrs > 0 else None
-
-            x = checkpoint(blk, x, edge_idx, ea, use_reentrant=False)
-            x, pooling_step, graph_level = self._maybe_pool(
-                x, layer_idx, pooling_step, graph_level)
-
-        if self.vae:
-            h      = self.latent_trunk(x)
-            mu     = self.mu_head(h)
-            logvar = self.logvar_head(h).clamp(-30., 20.)
-            if self.training:
-                z = mu + torch.exp(0.5 * logvar) * torch.randn_like(mu)
-            else:
-                z = mu
-            return z, mu, logvar
-        else:
-            x = self.latent_proj(x)
-            if self.training:
-                if self.latent_dropout > 0:
-                    x = F.dropout(x, p=self.latent_dropout)
-                if self.latent_noise_std > 0:
-                    x = x + torch.randn_like(x) * self.latent_noise_std
-            return x, None, None
+        return super().forward(x)
 
 
 # ===========================================================================
@@ -625,15 +690,47 @@ class ProgressiveGraphAutoencoder(nn.Module):
             use_residualsIO=use_residualsIO, log=log)
 
     @staticmethod
-    def _remap_legacy_decoder_key(key: str) -> Optional[str]:
-        """Map models13 decoder keys to models14 key layout.
+    def _remap_legacy_key(key: str) -> Optional[str]:
+        """Map models13 keys to models14 key layout (encoder + decoder)."""
+        # -----------------
+        # Encoder remapping
+        # -----------------
+        if key.startswith('encoder.input_proj.'):
+            return key.replace('encoder.input_proj.', 'encoder.input_block.input_proj.', 1)
 
-        models14 changed decoder module paths to support a Sequential pipeline.
-        This keeps checkpoint loading backward-compatible.
-        """
-        if not key.startswith('decoder.'):
-            return key
+        if key.startswith('encoder.input_norm.'):
+            return key.replace('encoder.input_norm.', 'encoder.input_block.input_norm.', 1)
 
+        if key.startswith('encoder.input_residual.'):
+            return key.replace('encoder.input_residual.', 'encoder.input_block.input_residual.', 1)
+
+        if key.startswith('encoder.gat_blocks.'):
+            m = re.match(r'^encoder\.gat_blocks\.(\d+)\.(.+)$', key)
+            if m is not None:
+                idx = int(m.group(1)) + 1
+                return f'encoder.gat_stage_{idx}.gat_block.{m.group(2)}'
+
+        if key.startswith('encoder.poolers.'):
+            m = re.match(r'^encoder\.poolers\.(\d+)\.(.+)$', key)
+            if m is not None:
+                layer_idx = m.group(1)
+                return f'encoder.pool_stage_{layer_idx}.pooler.{m.group(2)}'
+
+        if key.startswith('encoder.latent_trunk.'):
+            return key.replace('encoder.latent_trunk.', 'encoder.latent_head.latent_trunk.', 1)
+
+        if key.startswith('encoder.mu_head.'):
+            return key.replace('encoder.mu_head.', 'encoder.latent_head.mu_head.', 1)
+
+        if key.startswith('encoder.logvar_head.'):
+            return key.replace('encoder.logvar_head.', 'encoder.latent_head.logvar_head.', 1)
+
+        if key.startswith('encoder.latent_proj.'):
+            return key.replace('encoder.latent_proj.', 'encoder.latent_head.latent_proj.', 1)
+
+        # -----------------
+        # Decoder remapping
+        # -----------------
         if key.startswith('decoder.gat_blocks.'):
             m = re.match(r'^decoder\.gat_blocks\.(\d+)\.(.+)$', key)
             if m is not None:
@@ -668,7 +765,7 @@ class ProgressiveGraphAutoencoder(nn.Module):
     def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
         remapped = {}
         for key, value in state_dict.items():
-            new_key = self._remap_legacy_decoder_key(key)
+            new_key = self._remap_legacy_key(key)
             if new_key is not None:
                 remapped[new_key] = value
         return super().load_state_dict(remapped, strict=strict, assign=assign)

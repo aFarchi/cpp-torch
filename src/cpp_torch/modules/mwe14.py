@@ -155,6 +155,33 @@ out_path = BASE / "output/decoded_output_14.pt"
 torch.save(decoded.cpu(), out_path)
 print(f"Saved decoded output to {out_path}")
 
+# -----------------------------
+# Encoder smoke test from decoded output
+# -----------------------------
+if OUT_DIM > IN_DIM_ACTIVE:
+    raise ValueError(
+        f"Cannot build encoder input from decoded output: OUT_DIM ({OUT_DIM}) > "
+        f"IN_DIM_ACTIVE ({IN_DIM_ACTIVE})"
+    )
+
+encoder_input = torch.zeros(
+    decoded.shape[0], IN_DIM_ACTIVE, device=device, dtype=decoded.dtype
+)
+encoder_input[:, :OUT_DIM] = decoded
+
+with torch.no_grad():
+    encoded = model.encode(encoder_input)
+
+print(f"Encoder input shape: {tuple(encoder_input.shape)}")
+print(f"Encoded output shape: {tuple(encoded.shape)}")
+print(f"encoded stats -> mean: {encoded.mean().item():.4f}, "
+      f"std: {encoded.std().item():.4f}, "
+      f"min: {encoded.min().item():.4f}, max: {encoded.max().item():.4f}")
+
+enc_out_path = BASE / "output/encoded_from_decoded_14.pt"
+torch.save(encoded.cpu(), enc_out_path)
+print(f"Saved encoded output to {enc_out_path}")
+
 """
 print('registering buffers')
 for (name, tensor) in {
