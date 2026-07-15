@@ -16,32 +16,43 @@ Finally, compile the c++ executable using `pixi run make`.
 
 To use this toolbox, you need to run:
 ```sh
-pixi run init <name> <batch_size>
+pixi run init <name>
+pixi run make
 pixi run cpp
-pixi run check
 ```
 
-The first command will initialise a neural network of a given type (controlled by its name).
-A scripted version of that neural network will be written into `wdir/`.
-The configuration (name, batch size, input and output shapes) are also writen into `wdir/` and
-will be used by the following scripts.
+The first command will initialise a neural network of a given type (controlled by its name)
+and apply the following steps:
+- generating random parameters;
+- generating random input for the forward, TL, and AD operators;
+- apply the forward operator;
+- apply the AD operator;
+- apply the TL operator;
+- compute the AD test;
+- save a scripted version of the NN, which also contains the input and ouput of all operators.
 
-The second script will run the c++ executable, which follows these steps:
-- read the scripted neural network and its configuration;
-- reset the neural network parameters at random;
-- initialise random inputs using the given batch size;
-- apply the forward, adjoint, and tangent linear operators and save the output.
+The second command will compile the c++ executable.
 
-Finally, the third script reads the output of the c++ executable and compares it
-to what is obtained directly in python. It additionally computes an adjoint test
-on the output of the c++ executable.
+The third command will run the c++ executable, which follows these steps:
+- read the scripted neural network, and the input of all operators;
+- reset the model paramaters;
+- apply the forward operator and compare to the python output;
+- do the same for the AD and TL operators;
+- compute the AD test.
 
 ## Neural networks implemented
 
 Currently, the following neural networks are implemented:
-- "small-mlp": a small MLP;
-- "gnn-sage": a small GNN with only `torch_geometric.nn.SAGEConv` layers and only supporting `batch_size=1`;
-- more to come
+- "small-mlp";
+- "gnn-sage";
+- "gnn-gatv2";
+- "gnn-gatv3";
+- "zigas-decoder";
+- more to come.
+
+NB: for Ziga's decoder to work, you need to provide the `data/`, `graph/`, and `weights/`
+folders in `src/cpp_torch/modules/` (a symbolic link to the actual repositories is
+sufficient).
 
 To implement other neural networks, follow the example of the small MLP
 in `src/cpp_torch/modules/multi_layer_perceptron.py`. You only need to subclass
