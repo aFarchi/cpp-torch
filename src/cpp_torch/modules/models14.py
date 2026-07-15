@@ -455,9 +455,6 @@ class ProgressiveEncoder(nn.Sequential):
                 latent_noise_std=latent_noise_std,
             ))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return super().forward(x)
-
 
 # ===========================================================================
 # Progressive Decoder
@@ -553,19 +550,6 @@ class ProgressiveDecoder(nn.Sequential):
             feature_dropout=feature_dropout,
             use_residualsIO=use_residualsIO,
         ))
-
-    def forward(self, latent: torch.Tensor) -> torch.Tensor:
-        return super().forward(latent)
-
-    def decode_nockpt(self, latent: torch.Tensor) -> torch.Tensor:
-        """Full decode WITHOUT activation checkpointing.
-
-        torch.utils.checkpoint has no forward-mode AD rule, so the exact
-        tangent-linear of the full decoder must go through this method:
-            _, Jdz = torch.func.jvp(decoder.decode_nockpt, (z_b,), (dz,))
-        Holds all intermediates alive in dual-number form — use only where
-        memory allows; otherwise use finite differences of forward()."""
-        return self.forward(latent)
 
 
 # ===========================================================================
