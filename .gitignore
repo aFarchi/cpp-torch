@@ -5,8 +5,9 @@
 .pixi
 pixi.lock
 
-# pycharm
+# pycharm / vscode
 .idea
+.vscode
 
 # python
 dist
