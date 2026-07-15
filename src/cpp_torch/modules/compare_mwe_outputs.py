@@ -32,7 +32,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def compare_pair(name: str, path_a: str, path_b: str,
-                 rtol: float, atol: float) -> None:
+                 rtol: float, atol: float,
+                 require_allclose: bool = True) -> None:
     a = torch.load(path_a, map_location="cpu")
     b = torch.load(path_b, map_location="cpu")
 
@@ -56,11 +57,12 @@ def compare_pair(name: str, path_a: str, path_b: str,
     print(f"[{name}] rel_l2_diff: {rel_l2:.6e}")
     print(f"[{name}] allclose(rtol={rtol}, atol={atol}): {is_close}")
 
-    assert is_close, (
-        f"[{name}] Outputs are not allclose. "
-        f"max_abs_diff={max_abs:.6e}, mean_abs_diff={mean_abs:.6e}, "
-        f"rel_l2_diff={rel_l2:.6e}, rtol={rtol}, atol={atol}"
-    )
+    if require_allclose:
+        assert is_close, (
+            f"[{name}] Outputs are not allclose. "
+            f"max_abs_diff={max_abs:.6e}, mean_abs_diff={mean_abs:.6e}, "
+            f"rel_l2_diff={rel_l2:.6e}, rtol={rtol}, atol={atol}"
+        )
 
 
 def main() -> None:
@@ -79,7 +81,16 @@ def main() -> None:
         rtol=args.rtol,
         atol=args.atol,
     )
-    print("PASS: decoded and encoded outputs are allclose.")
+    compare_pair(
+        name="decoded_14_vs_14v2",
+        path_a="output/decoded_output_14.pt",
+        path_b="output/decoded_output_14v2.pt",
+        rtol=args.rtol,
+        atol=args.atol,
+        require_allclose=False,
+    )
+    print("PASS: strict checks succeeded for decoded and encoded (13 vs 14).")
+    print("INFO: decoded_14_vs_14v2 is reported without assertion.")
 
 
 if __name__ == "__main__":

@@ -7,11 +7,12 @@ Self-contained: every file this script needs lives under test_mwe/
     /perm/pazz/conda/envs/torch/bin/python mwe.py
 """
 from pathlib import Path
+import re
 
 import numpy as np
 import torch
 
-from models14 import ProgressiveGraphAutoencoder
+from models14 import ProgressiveDecoder
 
 #==================================================
 # AF
@@ -87,6 +88,49 @@ def load_or_create_shared_latent(path: Path, n_coarse: int,
     return z_cpu
 
 
+def decoder_state_dict_from_full_checkpoint(full_state_dict):
+    """Extract/remap decoder keys from a full autoencoder checkpoint."""
+    out = {}
+    for key, value in full_state_dict.items():
+        if not key.startswith("decoder."):
+            continue
+
+        k = key
+
+        # Legacy models13 key layout -> models14 ProgressiveDecoder layout.
+        if k.startswith("decoder.gat_blocks."):
+            m = re.match(r"^decoder\.gat_blocks\.(\d+)\.(.+)$", k)
+            if m is not None:
+                idx = int(m.group(1)) + 1
+                k = f"decoder.gat_stage_{idx}.gat_block.{m.group(2)}"
+
+        elif k.startswith("decoder.unpoolers."):
+            m = re.match(r"^decoder\.unpoolers\.(\d+)\.(.+)$", k)
+            if m is not None:
+                layer_idx = m.group(1)
+                k = f"decoder.unpool_and_film_{layer_idx}.unpooler.{m.group(2)}"
+
+        elif k.startswith("decoder.static_films."):
+            m = re.match(r"^decoder\.static_films\.(\d+)\.(.+)$", k)
+            if m is not None:
+                layer_idx = m.group(1)
+                k = f"decoder.unpool_and_film_{layer_idx}.film.{m.group(2)}"
+
+        elif k.startswith("decoder.output_proj."):
+            k = k.replace("decoder.output_proj.", "decoder.output_head.output_proj.", 1)
+
+        elif k.startswith("decoder.output_residual."):
+            k = k.replace("decoder.output_residual.", "decoder.output_head.output_residual.", 1)
+
+        # Structural static feature buffers are not persistent in models14.
+        if re.match(r"^decoder\.static_feats_\d+$", k):
+            continue
+
+        out[k[len("decoder."):]] = value
+
+    return out
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
@@ -123,41 +167,43 @@ decoder_static_feats = [
 ]
 
 # -----------------------------
-# Build model and load trained weights
+# Build decoder and load trained weights
 # -----------------------------
-model = ProgressiveGraphAutoencoder(
-    in_dim=IN_DIM_ACTIVE,
-    encoder_hidden_dims=ENCODER_HIDDEN_DIMS,
-    decoder_hidden_dims=DECODER_HIDDEN_DIMS,
+pooling_schedule = POOLING_SCHEDULE
+unpooling_schedule = UNPOOLING_SCHEDULE
+
+level_connections = level_connections_local[:len(pooling_schedule)]
+unpool_level_connections = unpool_level_connections_local[:len(pooling_schedule)]
+graphs = graphs[:len(pooling_schedule) + 1]
+unpooling_schedule = unpooling_schedule[:len(level_connections)]
+edge_attrs = edge_attrs[:len(pooling_schedule) + 1]
+unpool_edge_attrs = list(reversed(unpool_edge_attrs[:len(pooling_schedule)]))[:len(unpooling_schedule)]
+decoder_static_feats = decoder_static_feats[:len(pooling_schedule) + 1]
+
+decoder = ProgressiveDecoder(
     latent_dim=LATENT_DIM,
+    hidden_dims=DECODER_HIDDEN_DIMS,
     out_dim=OUT_DIM,
     graphs=graphs,
-    level_connections=level_connections_local,
-    unpool_level_connections=unpool_level_connections_local,
-    pooling_schedule=POOLING_SCHEDULE,
-    unpooling_schedule=UNPOOLING_SCHEDULE,
+    level_connections=list(reversed(unpool_level_connections)),
+    unpooling_schedule=unpooling_schedule,
     edge_attrs=edge_attrs,
-    pool_interlevel_edge_attrs=pool_edge_attrs,
-    unpool_interlevel_edge_attrs=unpool_edge_attrs,
-    decoder_static_feats=decoder_static_feats,
+    interlevel_edge_attrs=unpool_edge_attrs,
+    static_feats=decoder_static_feats,
     heads=HEADS,
     gat_dropout=GAT_DROPOUT,
     feature_dropout=FEATURE_DROPOUT,
-    latent_dropout=LATENT_DROPOUT,
-    latent_noise_std=LATENT_NOISE_STD,
-    encoder_mlp_ratio=ENCODER_MLP_RATIO,
     decoder_mlp_ratio=DECODER_MLP_RATIO,
     use_residualsIO=True,
-    vae=USE_VAE,
-    free_bits=FREE_BITS,
 ).to(device)
 
 state_dict = torch.load(WEIGHTS / f"{EXP_ID}_best_model.pt", map_location=device)
-model.load_state_dict(clean_state_dict(state_dict))
-model.eval()
+state_dict = clean_state_dict(state_dict)
+decoder.load_state_dict(decoder_state_dict_from_full_checkpoint(state_dict))
+decoder.eval()
 
-num_params = sum(p.numel() for p in model.parameters())
-print(f"Model loaded: {num_params:,} parameters")
+num_params = sum(p.numel() for p in decoder.parameters())
+print(f"Decoder loaded: {num_params:,} parameters")
 
 # -----------------------------
 # Random latent -> decode
@@ -167,43 +213,16 @@ z = load_or_create_shared_latent(SHARED_Z_PATH, n_coarse, LATENT_DIM, SEED).to(d
 print(f"Random latent shape: {tuple(z.shape)}")
 
 with torch.no_grad():
-    decoded = model.decode(z)
+    decoded = decoder(z)
 
 print(f"Decoded output shape: {tuple(decoded.shape)}")
 print(f"decoded stats -> mean: {decoded.mean().item():.4f}, "
-        f"std: {decoded.std().item():.4f}, "
-        f"min: {decoded.min().item():.4f}, max: {decoded.max().item():.4f}")
+      f"std: {decoded.std().item():.4f}, "
+      f"min: {decoded.min().item():.4f}, max: {decoded.max().item():.4f}")
 
-out_path = BASE / "output/decoded_output_14.pt"
+out_path = BASE / "output/decoded_output_14v2.pt"
 torch.save(decoded.cpu(), out_path)
 print(f"Saved decoded output to {out_path}")
-
-# -----------------------------
-# Encoder smoke test from decoded output
-# -----------------------------
-if OUT_DIM > IN_DIM_ACTIVE:
-    raise ValueError(
-        f"Cannot build encoder input from decoded output: OUT_DIM ({OUT_DIM}) > "
-        f"IN_DIM_ACTIVE ({IN_DIM_ACTIVE})"
-    )
-
-encoder_input = torch.zeros(
-    decoded.shape[0], IN_DIM_ACTIVE, device=device, dtype=decoded.dtype
-)
-encoder_input[:, :OUT_DIM] = decoded
-
-with torch.no_grad():
-    encoded = model.encode(encoder_input)
-
-print(f"Encoder input shape: {tuple(encoder_input.shape)}")
-print(f"Encoded output shape: {tuple(encoded.shape)}")
-print(f"encoded stats -> mean: {encoded.mean().item():.4f}, "
-      f"std: {encoded.std().item():.4f}, "
-      f"min: {encoded.min().item():.4f}, max: {encoded.max().item():.4f}")
-
-enc_out_path = BASE / "output/encoded_from_decoded_14.pt"
-torch.save(encoded.cpu(), enc_out_path)
-print(f"Saved encoded output to {enc_out_path}")
 
 """
 print('registering buffers')
@@ -211,10 +230,10 @@ for (name, tensor) in {
     'in_x': z,
     'out_forward': decoded,
     }.items():
-    model.register_buffer(name, tensor)
+    decoder.register_buffer(name, tensor)
 
 filename = 'scripted_model.pt'
 print(f'saving scripted model into "{filename}"')
-scripted_model = torch.jit.script(model)
+scripted_model = torch.jit.script(decoder)
 scripted_model.save(filename)
 """

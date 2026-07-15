@@ -25,6 +25,7 @@ BASE = Path(__file__).resolve().parent
 GRAPH = BASE / "graph"
 WEIGHTS = BASE / "weights"
 DATA = BASE / "data"
+SHARED_Z_PATH = BASE / "output/shared_latent_z.pt"
 
 EXP_ID = "v94"
 N_SUBGRAPHS = 6  # graph hierarchy has N_SUBGRAPHS+1 = 7 levels on disk
@@ -62,6 +63,28 @@ def clean_state_dict(state_dict, prefixes=("_orig_mod.",)):
                 new_k = new_k[len(p):]
         cleaned[new_k] = v
     return cleaned
+
+
+def load_or_create_shared_latent(path: Path, n_coarse: int,
+                                 latent_dim: int, seed: int) -> torch.Tensor:
+    expected_shape = (n_coarse, latent_dim)
+    if path.exists():
+        z_cpu = torch.load(path, map_location="cpu")
+        if tuple(z_cpu.shape) != expected_shape:
+            raise ValueError(
+                f"Shared latent at {path} has shape {tuple(z_cpu.shape)}, "
+                f"expected {expected_shape}"
+            )
+        print(f"Loaded shared latent from {path}")
+        return z_cpu
+
+    gen = torch.Generator(device="cpu")
+    gen.manual_seed(seed)
+    z_cpu = torch.randn(n_coarse, latent_dim, generator=gen, dtype=torch.float32)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(z_cpu, path)
+    print(f"Created shared latent at {path}")
+    return z_cpu
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -140,7 +163,7 @@ print(f"Model loaded: {num_params:,} parameters")
 # Random latent -> decode
 # -----------------------------
 n_coarse = len(node_mappings[1])  # 8929 for v94
-z = torch.randn(n_coarse, LATENT_DIM, device=device)
+z = load_or_create_shared_latent(SHARED_Z_PATH, n_coarse, LATENT_DIM, SEED).to(device)
 print(f"Random latent shape: {tuple(z.shape)}")
 
 with torch.no_grad():
