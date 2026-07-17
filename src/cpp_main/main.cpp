@@ -14,11 +14,16 @@ void dump(const std::string& name, const torch::Tensor & t) {
     f.write((char*)cpu.data_ptr(), cpu.numel() * sizeof(float));
 }
 
-// flatten tensor
+// flatten tensor (skip undefined tensors from unused parameters)
 torch::Tensor flatten(const std::vector<torch::Tensor> t_in) {
     std::vector<torch::Tensor> components;
     for (const auto & t : t_in) {
-        components.push_back(t.flatten());
+        if (t.defined()) {
+            components.push_back(t.flatten());
+        }
+    }
+    if (components.empty()) {
+        return torch::zeros({0});
     }
     return torch::cat(components);
 }
@@ -96,12 +101,15 @@ class ScriptedModule {
             )[0];
         }
         torch::Tensor apply_ad_parameters(const torch::Tensor & dy) {
-            return flatten(torch::autograd::grad(
+            auto grads = torch::autograd::grad(
                 {m_y},
                 m_parameters,
                 {dy},
-                true // retain_graph
-            ));
+                true,   // retain_graph
+                false,  // create_graph
+                true    // allow_unused
+            );
+            return flatten(grads);
         }
         torch::Tensor apply_tl_state(const torch::Tensor & dx) {
             torch::Tensor dummy = torch::randn(m_output_shape).requires_grad_(true);
@@ -125,17 +133,20 @@ class ScriptedModule {
                 {m_y},
                 m_parameters,
                 {dummy},
-                true, // retain_graph
-                true // create_graph
+                true,   // retain_graph
+                true,   // create_graph
+                true    // allow_unused
             );
             torch::Tensor Fp_dp = torch::zeros(m_output_shape);
             for (int i = 0; i < m_parameters.size(); ++i) {
-                Fp_dp += torch::autograd::grad(
-                    {Fp_dummy[i]},
-                    {dummy},
-                    {dp_unflatten[i]},
-                    true // retain_graph
-                )[0];
+                if (Fp_dummy[i].defined()) {
+                    Fp_dp += torch::autograd::grad(
+                        {Fp_dummy[i]},
+                        {dummy},
+                        {dp_unflatten[i]},
+                        true // retain_graph
+                    )[0];
+                }
             }
             return Fp_dp;
         }
@@ -146,17 +157,32 @@ class ScriptedModule {
                 {m_y},
                 m_parameters,
                 {dummy},
-                true, // retain_graph
-                true // create_graph
+                true,   // retain_graph
+                true,   // create_graph
+                true    // allow_unused
             );
+            // Filter out undefined gradients
+            std::vector<torch::Tensor> Fp_dummy_defined;
+            std::vector<torch::Tensor> dp_unflatten_filtered;
+            for (int i = 0; i < Fp_dummy.size(); ++i) {
+                if (Fp_dummy[i].defined()) {
+                    Fp_dummy_defined.push_back(Fp_dummy[i]);
+                    dp_unflatten_filtered.push_back(dp_unflatten[i]);
+                }
+            }
+            
+            if (Fp_dummy_defined.empty()) {
+                return torch::zeros(m_output_shape);
+            }
+            
             auto Fp_dp_components = torch::autograd::grad(
-                Fp_dummy,
+                Fp_dummy_defined,
                 {dummy},
-                dp_unflatten,
+                dp_unflatten_filtered,
                 true // retain_graph
             );
             torch::Tensor Fp_dp = torch::zeros(m_output_shape);
-            for (int i = 0; i < m_parameters.size(); ++i) {
+            for (int i = 0; i < Fp_dp_components.size(); ++i) {
                 Fp_dp += Fp_dp_components[i];
             }
             return Fp_dp;
